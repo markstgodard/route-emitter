@@ -13,6 +13,8 @@ import (
 	. "github.com/cloudfoundry-incubator/route-emitter/syncer"
 	"github.com/cloudfoundry-incubator/runtime-schema/bbs/fake_bbs"
 	"github.com/cloudfoundry-incubator/runtime-schema/models"
+	"github.com/cloudfoundry/dropsonde/autowire/metrics"
+	fake_metrics_sender "github.com/cloudfoundry/dropsonde/metric_sender/fake"
 	"github.com/cloudfoundry/gibson"
 	"github.com/cloudfoundry/gunk/diegonats"
 	"github.com/pivotal-golang/lager/lagertest"
@@ -35,6 +37,7 @@ var _ = Describe("Syncer", func() {
 		syncDuration time.Duration
 
 		routerStartMessages chan<- *nats.Msg
+		fakeMetricSender    *fake_metrics_sender.FakeMetricSender
 	)
 
 	BeforeEach(func() {
@@ -96,6 +99,10 @@ var _ = Describe("Syncer", func() {
 				Routes:      []string{"route-1", "route-2"},
 			},
 		}, nil)
+
+		fakeMetricSender = fake_metrics_sender.NewFakeMetricSender()
+		metrics.Initialize(fakeMetricSender)
+		table.RouteCountReturns(123)
 	})
 
 	JustBeforeEach(func() {
@@ -157,6 +164,26 @@ var _ = Describe("Syncer", func() {
 				Eventually(greetings).Should(Receive())
 				Consistently(greetings, 1).ShouldNot(Receive())
 			})
+
+			It("sends a 'routes total' metric", func() {
+				Eventually(func() float64 {
+					return fakeMetricSender.GetValue("RoutesTotal").Value
+				}, 2).Should(BeEquivalentTo(123))
+			})
+
+			It("should inrement the 'routes emitted' counter with the frequency of the passed-in-interval", func() {
+				Eventually(func() uint64 {
+					return fakeMetricSender.GetCounter("RoutesEmitted")
+				}, 5).Should(BeEquivalentTo(2))
+				t1 := time.Now()
+
+				Eventually(func() uint64 {
+					return fakeMetricSender.GetCounter("RoutesEmitted")
+				}, 5).Should(BeEquivalentTo(3))
+				t2 := time.Now()
+
+				Ω(t2.Sub(t1)).Should(BeNumerically("~", 1*time.Second, 200*time.Millisecond))
+			})
 		})
 
 		Context("when the router does not emit a router.start", func() {
@@ -208,6 +235,12 @@ var _ = Describe("Syncer", func() {
 				t2 := time.Now()
 				Ω(t2.Sub(t1)).Should(BeNumerically("~", 2*time.Second, 200*time.Millisecond))
 			})
+
+			It("sends a 'routes total' metric", func() {
+				Eventually(func() float64 {
+					return fakeMetricSender.GetValue("RoutesTotal").Value
+				}, 2*time.Second).Should(BeEquivalentTo(123))
+			})
 		})
 
 		Context("if it never hears anything from a router anywhere", func() {
@@ -240,6 +273,12 @@ var _ = Describe("Syncer", func() {
 			Ω(emitter.EmitArgsForCall(1)).Should(Equal(syncMessages))
 			Ω(emitter.EmitArgsForCall(2)).Should(Equal(syncMessages))
 			Ω(t2.Sub(t1)).Should(BeNumerically("~", 500*time.Millisecond, 100*time.Millisecond))
+		})
+
+		It("sends a 'routes total' metric", func() {
+			Eventually(func() float64 {
+				return fakeMetricSender.GetValue("RoutesTotal").Value
+			}).Should(BeEquivalentTo(123))
 		})
 
 		Context("when fetching actuals fails", func() {

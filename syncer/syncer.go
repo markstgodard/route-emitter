@@ -9,11 +9,17 @@ import (
 	"github.com/cloudfoundry-incubator/route-emitter/nats_emitter"
 	"github.com/cloudfoundry-incubator/route-emitter/routing_table"
 	"github.com/cloudfoundry-incubator/runtime-schema/bbs"
+	"github.com/cloudfoundry-incubator/runtime-schema/metric"
 	"github.com/cloudfoundry-incubator/runtime-schema/models"
 	"github.com/cloudfoundry/gibson"
 	"github.com/cloudfoundry/gunk/diegonats"
-	"github.com/nu7hatch/gouuid"
+	uuid "github.com/nu7hatch/gouuid"
 	"github.com/pivotal-golang/lager"
+)
+
+const (
+	routesTotal   = metric.Metric("RoutesTotal")
+	routesEmitted = metric.Counter("RoutesEmitted")
 )
 
 type Syncer struct {
@@ -116,6 +122,9 @@ func (syncer *Syncer) emit() {
 	if err != nil {
 		syncer.logger.Error("failed-to-emit-routes", err)
 	}
+
+	routesEmitted.Increment()
+	routesTotal.Send(syncer.table.RouteCount())
 }
 
 func (syncer *Syncer) syncAndEmit() {
@@ -140,6 +149,8 @@ func (syncer *Syncer) syncAndEmit() {
 	if err != nil {
 		syncer.logger.Error("failed-to-emit-synced", err)
 	}
+
+	routesTotal.Send(syncer.table.RouteCount())
 }
 
 func (syncer *Syncer) register(desired models.DesiredLRP, actual models.ActualLRP) error {
