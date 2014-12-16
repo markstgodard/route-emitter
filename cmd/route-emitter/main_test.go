@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
+	"github.com/pivotal-golang/lager/lagertest"
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/ginkgomon"
 )
@@ -128,7 +129,7 @@ var _ = Describe("Route Emitter", func() {
 
 		Context("and an instance starts running", func() {
 			BeforeEach(func() {
-				err := bbs.DesireLRP(models.DesiredLRP{
+				desiredLRP := models.DesiredLRP{
 					Domain:      "tests",
 					ProcessGuid: "guid1",
 					Routes:      []string{"route-1", "route-2"},
@@ -139,14 +140,15 @@ var _ = Describe("Route Emitter", func() {
 					Action: &models.RunAction{
 						Path: "ls",
 					},
-				})
+				}
+				err := bbs.DesireLRP(desiredLRP)
 				Ω(err).ShouldNot(HaveOccurred())
 
-				a := models.NewActualLRP("guid1", "iguid1", "cell-id", "some-domain", 0, "")
-
-				_, err = bbs.CreateActualLRP(a)
+				a, err := bbs.CreateActualLRP(desiredLRP, 0, lagertest.NewTestLogger("test"))
 				Ω(err).ShouldNot(HaveOccurred())
-				_, err = bbs.ClaimActualLRP(a)
+
+				a.CellID = "cell-id"
+				_, err = bbs.ClaimActualLRP(*a)
 				Ω(err).ShouldNot(HaveOccurred())
 			})
 
