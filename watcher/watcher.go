@@ -190,35 +190,23 @@ func (watcher *Watcher) handleActualDelete(actualLRP receptor.ActualLRPResponse)
 }
 
 func (watcher *Watcher) addOrUpdateAndEmit(actualLRP receptor.ActualLRPResponse) {
-	endpoints, err := routing_table.EndpointsFromActual(actualLRP)
-	if err != nil {
-		watcher.logger.Error("failed-to-extract-endpoint-from-actual", err)
-		return
-	}
+	endpointsByRoutingKey := routing_table.EndpointsByRoutingKeyFromActuals([]receptor.ActualLRPResponse{actualLRP})
 
-	for _, key := range routing_table.RoutingKeysFromActual(actualLRP) {
+	for key, endpoints := range endpointsByRoutingKey {
 		for _, endpoint := range endpoints {
-			if key.ContainerPort == endpoint.ContainerPort {
-				messagesToEmit := watcher.table.AddOrUpdateEndpoint(key, endpoint)
-				watcher.emitter.Emit(messagesToEmit, &routesRegistered, &routesUnregistered)
-			}
+			messagesToEmit := watcher.table.AddOrUpdateEndpoint(key, endpoint)
+			watcher.emitter.Emit(messagesToEmit, &routesRegistered, &routesUnregistered)
 		}
 	}
 }
 
 func (watcher *Watcher) removeAndEmit(actualLRP receptor.ActualLRPResponse) {
-	endpoints, err := routing_table.EndpointsFromActual(actualLRP)
-	if err != nil {
-		watcher.logger.Error("failed-to-extract-endpoint-from-actual", err)
-		return
-	}
+	endpointsByRoutingKey := routing_table.EndpointsByRoutingKeyFromActuals([]receptor.ActualLRPResponse{actualLRP})
 
-	for _, key := range routing_table.RoutingKeysFromActual(actualLRP) {
+	for key, endpoints := range endpointsByRoutingKey {
 		for _, endpoint := range endpoints {
-			if key.ContainerPort == endpoint.ContainerPort {
-				messagesToEmit := watcher.table.RemoveEndpoint(key, endpoint)
-				watcher.emitter.Emit(messagesToEmit, &routesRegistered, &routesUnregistered)
-			}
+			messagesToEmit := watcher.table.RemoveEndpoint(key, endpoint)
+			watcher.emitter.Emit(messagesToEmit, &routesRegistered, &routesUnregistered)
 		}
 	}
 }

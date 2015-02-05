@@ -1,8 +1,6 @@
 package routing_table
 
 import (
-	"errors"
-
 	"github.com/cloudfoundry-incubator/receptor"
 	"github.com/cloudfoundry-incubator/route-emitter/cfroutes"
 )
@@ -31,11 +29,11 @@ func RoutesByRoutingKeyFromDesireds(desireds []receptor.DesiredLRPResponse) Rout
 func EndpointsByRoutingKeyFromActuals(actuals []receptor.ActualLRPResponse) EndpointsByRoutingKey {
 	endpointsByRoutingKey := EndpointsByRoutingKey{}
 	for _, actual := range actuals {
-		endpoints, err := EndpointsFromActual(actual)
-		if err != nil {
+		if len(actual.Ports) == 0 {
 			continue
 		}
 
+		endpoints := endpointsFromActual(actual)
 		for containerPort, endpoint := range endpoints {
 			key := RoutingKey{ProcessGuid: actual.ProcessGuid, ContainerPort: containerPort}
 			endpointsByRoutingKey[key] = append(endpointsByRoutingKey[key], endpoint)
@@ -45,13 +43,17 @@ func EndpointsByRoutingKeyFromActuals(actuals []receptor.ActualLRPResponse) Endp
 	return endpointsByRoutingKey
 }
 
-func EndpointsFromActual(actual receptor.ActualLRPResponse) (map[uint16]Endpoint, error) {
-	endpoints := map[uint16]Endpoint{}
-
-	if len(actual.Ports) == 0 {
-		return endpoints, errors.New("missing ports")
+func RoutingKeysFromDesired(desired receptor.DesiredLRPResponse) []RoutingKey {
+	keys := []RoutingKey{}
+	for _, containerPort := range desired.Ports {
+		keys = append(keys, RoutingKey{ProcessGuid: desired.ProcessGuid, ContainerPort: containerPort})
 	}
 
+	return keys
+}
+
+func endpointsFromActual(actual receptor.ActualLRPResponse) map[uint16]Endpoint {
+	endpoints := map[uint16]Endpoint{}
 	for _, portMapping := range actual.Ports {
 		endpoint := Endpoint{
 			InstanceGuid:  actual.InstanceGuid,
@@ -62,23 +64,5 @@ func EndpointsFromActual(actual receptor.ActualLRPResponse) (map[uint16]Endpoint
 		endpoints[portMapping.ContainerPort] = endpoint
 	}
 
-	return endpoints, nil
-}
-
-func RoutingKeysFromActual(actual receptor.ActualLRPResponse) []RoutingKey {
-	keys := []RoutingKey{}
-	for _, portMapping := range actual.Ports {
-		keys = append(keys, RoutingKey{ProcessGuid: actual.ProcessGuid, ContainerPort: portMapping.ContainerPort})
-	}
-
-	return keys
-}
-
-func RoutingKeysFromDesired(desired receptor.DesiredLRPResponse) []RoutingKey {
-	keys := []RoutingKey{}
-	for _, containerPort := range desired.Ports {
-		keys = append(keys, RoutingKey{ProcessGuid: desired.ProcessGuid, ContainerPort: containerPort})
-	}
-
-	return keys
+	return endpoints
 }

@@ -77,61 +77,6 @@ var _ = Describe("ByRoutingKey", func() {
 		})
 	})
 
-	Describe("EndpointsFromActual", func() {
-		It("builds a map of container port to endpoint", func() {
-			endpoints, err := EndpointsFromActual(receptor.ActualLRPResponse{
-				ProcessGuid:  "process-guid",
-				InstanceGuid: "instance-guid",
-				Index:        0,
-				Domain:       "domain",
-				Address:      "1.1.1.1",
-				Ports: []receptor.PortMapping{
-					{HostPort: 11, ContainerPort: 44},
-					{HostPort: 66, ContainerPort: 99},
-				},
-			})
-			Ω(err).ShouldNot(HaveOccurred())
-
-			Ω(endpoints).Should(HaveLen(2))
-			Ω(endpoints).Should(ContainElement(Endpoint{Host: "1.1.1.1", Port: 11, InstanceGuid: "instance-guid", ContainerPort: 44}))
-			Ω(endpoints).Should(ContainElement(Endpoint{Host: "1.1.1.1", Port: 66, InstanceGuid: "instance-guid", ContainerPort: 99}))
-		})
-	})
-
-	Describe("RoutingKeysFromActual", func() {
-		It("creates a list of keys for an actual LRP", func() {
-			keys := RoutingKeysFromActual(receptor.ActualLRPResponse{
-				ProcessGuid:  "process-guid",
-				InstanceGuid: "instance-guid",
-				Index:        0,
-				Domain:       "domain",
-				Address:      "1.1.1.1",
-				Ports: []receptor.PortMapping{
-					{HostPort: 11, ContainerPort: 44},
-					{HostPort: 66, ContainerPort: 99},
-				},
-			})
-
-			Ω(keys).Should(HaveLen(2))
-			Ω(keys).Should(ContainElement(RoutingKey{ProcessGuid: "process-guid", ContainerPort: 44}))
-			Ω(keys).Should(ContainElement(RoutingKey{ProcessGuid: "process-guid", ContainerPort: 99}))
-		})
-
-		Context("when the actual lrp has no port mappings", func() {
-			It("returns no keys", func() {
-				keys := RoutingKeysFromActual(receptor.ActualLRPResponse{
-					ProcessGuid:  "process-guid",
-					InstanceGuid: "instance-guid",
-					Index:        0,
-					Domain:       "domain",
-					Address:      "1.1.1.1",
-				})
-
-				Ω(keys).Should(HaveLen(0))
-			})
-		})
-	})
-
 	Describe("RoutingKeysFromDesired", func() {
 		It("creates a list of keys for an actual LRP", func() {
 			routes := cfroutes.CFRoutes{
