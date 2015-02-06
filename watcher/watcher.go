@@ -132,19 +132,19 @@ func (watcher *Watcher) handleDesiredCreateOrUpdate(desiredLRP receptor.DesiredL
 	watcher.logger.Info("handling-desired-create-or-update", desiredLRPData(desiredLRP))
 	defer watcher.logger.Info("done-handling-desired-create-or-update")
 
-	var hostnames []string
+	routingKeys := routing_table.RoutingKeysFromDesired(desiredLRP)
+	routes, _ := cfroutes.CFRoutesFromRoutingInfo(desiredLRP.Routes)
 
-	routes, err := cfroutes.CFRoutesFromRoutingInfo(desiredLRP.Routes)
-	if err == nil && len(routes) > 0 {
-		hostnames = routes[0].Hostnames
-	}
-
-	for _, key := range routing_table.RoutingKeysFromDesired(desiredLRP) {
-		messagesToEmit := watcher.table.SetRoutes(key, routing_table.Routes{
-			URIs:    hostnames,
-			LogGuid: desiredLRP.LogGuid,
-		})
-		watcher.emitter.Emit(messagesToEmit, &routesRegistered, &routesUnregistered)
+	for _, key := range routingKeys {
+		for _, route := range routes {
+			if key.ContainerPort == route.Port {
+				messagesToEmit := watcher.table.SetRoutes(key, routing_table.Routes{
+					URIs:    route.Hostnames,
+					LogGuid: desiredLRP.LogGuid,
+				})
+				watcher.emitter.Emit(messagesToEmit, &routesRegistered, &routesUnregistered)
+			}
+		}
 	}
 }
 

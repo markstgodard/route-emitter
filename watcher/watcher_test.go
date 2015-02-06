@@ -23,16 +23,21 @@ const logGuid = "some-log-guid"
 
 var _ = Describe("Watcher", func() {
 	const (
-		expectedProcessGuid   = "process-guid"
-		expectedInstanceGuid  = "instance-guid"
-		expectedHost          = "1.1.1.1"
-		expectedExternalPort  = 11000
-		expectedContainerPort = uint16(11)
+		expectedProcessGuid             = "process-guid"
+		expectedInstanceGuid            = "instance-guid"
+		expectedHost                    = "1.1.1.1"
+		expectedExternalPort            = 11000
+		expectedContainerPort           = uint16(11)
+		expectedAdditionalContainerPort = uint16(12)
 	)
 	var expectedRoutes = []string{"route-1", "route-2"}
 	var expectedRoutingKey = routing_table.RoutingKey{
 		ProcessGuid:   expectedProcessGuid,
 		ContainerPort: expectedContainerPort,
+	}
+	var expectedAdditionalRoutingKey = routing_table.RoutingKey{
+		ProcessGuid:   expectedProcessGuid,
+		ContainerPort: expectedAdditionalContainerPort,
 	}
 
 	var (
@@ -190,6 +195,266 @@ var _ = Describe("Watcher", func() {
 			})
 		})
 
+		Context("adding a host to an existing port", func() {
+			Context("when there is no port for the route", func() {
+				BeforeEach(func() {
+					table.SetRoutesReturns(dummyMessagesToEmit)
+
+					eventSource := new(fake_receptor.FakeEventSource)
+					receptorClient.SubscribeToEventsReturns(eventSource, nil)
+
+					originalDesiredLRP := receptor.DesiredLRPResponse{
+						Action: &models.RunAction{
+							Path: "ls",
+						},
+						Domain:      "tests",
+						ProcessGuid: expectedProcessGuid,
+						LogGuid:     logGuid,
+						Ports:       []uint16{expectedContainerPort},
+						Routes: cfroutes.CFRoutes{
+							{Hostnames: []string{expectedRoutes[0]}, Port: expectedContainerPort},
+						}.RoutingInfo(),
+					}
+
+					changedDesiredLRP := receptor.DesiredLRPResponse{
+						Action: &models.RunAction{
+							Path: "ls",
+						},
+						Domain:      "tests",
+						ProcessGuid: expectedProcessGuid,
+						LogGuid:     logGuid,
+						Ports:       []uint16{expectedContainerPort},
+						Routes: cfroutes.CFRoutes{
+							{Hostnames: []string{expectedRoutes[0]}, Port: expectedContainerPort},
+							{Hostnames: []string{expectedRoutes[1]}, Port: expectedAdditionalContainerPort},
+						}.RoutingInfo(),
+					}
+
+					eventSource.NextStub = func() (receptor.Event, error) {
+						if eventSource.NextCallCount() == 1 {
+							return receptor.NewDesiredLRPChangedEvent(
+								originalDesiredLRP,
+								changedDesiredLRP,
+							), nil
+						} else {
+							return nil, nil
+						}
+					}
+				})
+
+				It("should set the routes on the table", func() {
+					Eventually(table.SetRoutesCallCount).Should(Equal(1))
+
+					key, routes := table.SetRoutesArgsForCall(0)
+
+					Ω(key).Should(Equal(expectedRoutingKey))
+					Ω(routes).Should(Equal(routing_table.Routes{
+						URIs:    []string{expectedRoutes[0]},
+						LogGuid: logGuid,
+					}))
+				})
+
+				It("passes a 'routes registered' counter to Emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(1))
+					_, registerCounter, _ := emitter.EmitArgsForCall(0)
+					Expect(string(*registerCounter)).To(Equal("RoutesRegistered"))
+				})
+
+				It("passes a 'routes unregistered' counter to Emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(1))
+					_, _, unregisterCounter := emitter.EmitArgsForCall(0)
+					Expect(string(*unregisterCounter)).To(Equal("RoutesUnregistered"))
+				})
+
+				It("should emit whatever the table tells it to emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(1))
+					messagesToEmit, _, _ := emitter.EmitArgsForCall(0)
+					Ω(messagesToEmit).Should(Equal(dummyMessagesToEmit))
+				})
+			})
+
+			Context("when there is a port for the route", func() {
+				BeforeEach(func() {
+					table.SetRoutesReturns(dummyMessagesToEmit)
+
+					eventSource := new(fake_receptor.FakeEventSource)
+					receptorClient.SubscribeToEventsReturns(eventSource, nil)
+
+					originalDesiredLRP := receptor.DesiredLRPResponse{
+						Action: &models.RunAction{
+							Path: "ls",
+						},
+						Domain:      "tests",
+						ProcessGuid: expectedProcessGuid,
+						LogGuid:     logGuid,
+						Ports:       []uint16{expectedContainerPort},
+						Routes: cfroutes.CFRoutes{
+							{Hostnames: []string{expectedRoutes[0]}, Port: expectedContainerPort},
+						}.RoutingInfo(),
+					}
+
+					changedDesiredLRP := receptor.DesiredLRPResponse{
+						Action: &models.RunAction{
+							Path: "ls",
+						},
+						Domain:      "tests",
+						ProcessGuid: expectedProcessGuid,
+						LogGuid:     logGuid,
+						Ports:       []uint16{expectedContainerPort, expectedAdditionalContainerPort},
+						Routes: cfroutes.CFRoutes{
+							{Hostnames: []string{expectedRoutes[0]}, Port: expectedContainerPort},
+							{Hostnames: []string{expectedRoutes[1]}, Port: expectedAdditionalContainerPort},
+						}.RoutingInfo(),
+					}
+
+					eventSource.NextStub = func() (receptor.Event, error) {
+						if eventSource.NextCallCount() == 1 {
+							return receptor.NewDesiredLRPChangedEvent(
+								originalDesiredLRP,
+								changedDesiredLRP,
+							), nil
+						} else {
+							return nil, nil
+						}
+					}
+				})
+
+				It("should set the routes on the table", func() {
+					Eventually(table.SetRoutesCallCount).Should(Equal(2))
+
+					routesByRoutingKey := map[routing_table.RoutingKey]routing_table.Routes{}
+					for i := 0; i < 2; i++ {
+						key, routes := table.SetRoutesArgsForCall(i)
+						routesByRoutingKey[key] = routes
+					}
+
+					Ω(routesByRoutingKey).Should(Equal(map[routing_table.RoutingKey]routing_table.Routes{
+						expectedRoutingKey: {
+							URIs:    []string{expectedRoutes[0]},
+							LogGuid: logGuid,
+						},
+						expectedAdditionalRoutingKey: {
+							URIs:    []string{expectedRoutes[1]},
+							LogGuid: logGuid,
+						},
+					}))
+				})
+
+				It("passes a 'routes registered' counter to Emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
+					_, registerCounter, _ := emitter.EmitArgsForCall(0)
+					Expect(string(*registerCounter)).To(Equal("RoutesRegistered"))
+				})
+
+				It("passes a 'routes unregistered' counter to Emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
+					_, _, unregisterCounter := emitter.EmitArgsForCall(0)
+					Expect(string(*unregisterCounter)).To(Equal("RoutesUnregistered"))
+				})
+
+				It("should emit whatever the table tells it to emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
+					messagesToEmit, _, _ := emitter.EmitArgsForCall(0)
+					Ω(messagesToEmit).Should(Equal(dummyMessagesToEmit))
+				})
+			})
+
+			Context("when there is a port for the route", func() {
+				BeforeEach(func() {
+					table.SetRoutesReturns(dummyMessagesToEmit)
+
+					eventSource := new(fake_receptor.FakeEventSource)
+					receptorClient.SubscribeToEventsReturns(eventSource, nil)
+
+					originalDesiredLRP := receptor.DesiredLRPResponse{
+						Action: &models.RunAction{
+							Path: "ls",
+						},
+						Domain:      "tests",
+						ProcessGuid: expectedProcessGuid,
+						LogGuid:     logGuid,
+						Ports:       []uint16{expectedContainerPort},
+						Routes: cfroutes.CFRoutes{
+							{Hostnames: []string{expectedRoutes[0]}, Port: expectedContainerPort},
+						}.RoutingInfo(),
+					}
+
+					changedDesiredLRP := receptor.DesiredLRPResponse{
+						Action: &models.RunAction{
+							Path: "ls",
+						},
+						Domain:      "tests",
+						ProcessGuid: expectedProcessGuid,
+						LogGuid:     logGuid,
+						Ports:       []uint16{expectedContainerPort, expectedAdditionalContainerPort},
+						Routes: cfroutes.CFRoutes{
+							{Hostnames: []string{expectedRoutes[0]}, Port: expectedContainerPort},
+							{Hostnames: []string{expectedRoutes[1]}, Port: expectedAdditionalContainerPort},
+						}.RoutingInfo(),
+					}
+
+					eventSource.NextStub = func() (receptor.Event, error) {
+						if eventSource.NextCallCount() == 1 {
+							return receptor.NewDesiredLRPChangedEvent(
+								originalDesiredLRP,
+								changedDesiredLRP,
+							), nil
+						} else {
+							return nil, nil
+						}
+					}
+				})
+
+				It("should set the routes on the table", func() {
+					Eventually(table.SetRoutesCallCount).Should(Equal(2))
+
+					routesByRoutingKey := map[routing_table.RoutingKey]routing_table.Routes{}
+					for i := 0; i < 2; i++ {
+						key, routes := table.SetRoutesArgsForCall(i)
+						routesByRoutingKey[key] = routes
+					}
+
+					Ω(routesByRoutingKey).Should(Equal(map[routing_table.RoutingKey]routing_table.Routes{
+						expectedRoutingKey: {
+							URIs:    []string{expectedRoutes[0]},
+							LogGuid: logGuid,
+						},
+						expectedAdditionalRoutingKey: {
+							URIs:    []string{expectedRoutes[1]},
+							LogGuid: logGuid,
+						},
+					}))
+				})
+
+				It("passes a 'routes registered' counter to Emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
+					_, registerCounter, _ := emitter.EmitArgsForCall(0)
+					Expect(string(*registerCounter)).To(Equal("RoutesRegistered"))
+				})
+
+				It("passes a 'routes unregistered' counter to Emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
+					_, _, unregisterCounter := emitter.EmitArgsForCall(0)
+					Expect(string(*unregisterCounter)).To(Equal("RoutesUnregistered"))
+				})
+
+				It("should emit whatever the table tells it to emit", func() {
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
+					messagesToEmit, _, _ := emitter.EmitArgsForCall(0)
+					Ω(messagesToEmit).Should(Equal(dummyMessagesToEmit))
+				})
+			})
+		})
+
+		Context("removing a port from an existing host", func() {
+		})
+
+		Context("adding a host to an existing port", func() {
+		})
+
+		Context("removing a host from an existing port", func() {
+		})
+
 		Context("when a delete event occurs", func() {
 			BeforeEach(func() {
 				table.RemoveRoutesReturns(dummyMessagesToEmit)
@@ -249,6 +514,7 @@ var _ = Describe("Watcher", func() {
 						Address:      expectedHost,
 						Ports: []receptor.PortMapping{
 							{ContainerPort: expectedContainerPort, HostPort: expectedExternalPort},
+							{ContainerPort: expectedAdditionalContainerPort, HostPort: expectedExternalPort},
 						},
 						State: receptor.ActualLRPStateRunning,
 					}
@@ -263,31 +529,44 @@ var _ = Describe("Watcher", func() {
 				})
 
 				It("should add/update the endpoint on the table", func() {
-					Eventually(table.AddOrUpdateEndpointCallCount).Should(Equal(1))
-					key, endpoint := table.AddOrUpdateEndpointArgsForCall(0)
-					Ω(key).Should(Equal(expectedRoutingKey))
-					Ω(endpoint).Should(Equal(routing_table.Endpoint{
-						InstanceGuid:  expectedInstanceGuid,
-						Host:          expectedHost,
-						Port:          expectedExternalPort,
-						ContainerPort: expectedContainerPort,
+					Eventually(table.AddOrUpdateEndpointCallCount).Should(Equal(2))
+
+					endpointsByRoutingKey := map[routing_table.RoutingKey]routing_table.Endpoint{}
+					for i := 0; i < 2; i++ {
+						key, endpoint := table.AddOrUpdateEndpointArgsForCall(i)
+						endpointsByRoutingKey[key] = endpoint
+					}
+
+					Ω(endpointsByRoutingKey).Should(Equal(map[routing_table.RoutingKey]routing_table.Endpoint{
+						expectedRoutingKey: {
+							InstanceGuid:  expectedInstanceGuid,
+							Host:          expectedHost,
+							Port:          expectedExternalPort,
+							ContainerPort: expectedContainerPort,
+						},
+						expectedAdditionalRoutingKey: {
+							InstanceGuid:  expectedInstanceGuid,
+							Host:          expectedHost,
+							Port:          expectedExternalPort,
+							ContainerPort: expectedAdditionalContainerPort,
+						},
 					}))
 				})
 
 				It("should emit whatever the table tells it to emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(1))
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
 					messagesToEmit, _, _ := emitter.EmitArgsForCall(0)
 					Ω(messagesToEmit).Should(Equal(dummyMessagesToEmit))
 				})
 
 				It("passes a 'routes registered' counter to Emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(1))
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
 					_, registerCounter, _ := emitter.EmitArgsForCall(0)
 					Expect(string(*registerCounter)).To(Equal("RoutesRegistered"))
 				})
 
 				It("passes a 'routes unregistered' counter to Emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(1))
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
 					_, _, unregisterCounter := emitter.EmitArgsForCall(0)
 					Expect(string(*unregisterCounter)).To(Equal("RoutesUnregistered"))
 				})
