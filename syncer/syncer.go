@@ -121,10 +121,12 @@ func (syncer *Syncer) emit() {
 	messagesToEmit := syncer.table.MessagesToEmit()
 
 	syncer.logger.Info("emitting-messages", lager.Data{"messages": messagesToEmit})
-	err := syncer.emitter.Emit(messagesToEmit, &routesSynced, nil)
+	err := syncer.emitter.Emit(messagesToEmit)
 	if err != nil {
 		syncer.logger.Error("failed-to-emit-routes", err)
 	}
+	count := syncer.hostNameLen(messagesToEmit.RegistrationMessages)
+	routesSynced.Add(count)
 
 	routesTotal.Send(syncer.table.RouteCount())
 }
@@ -166,12 +168,22 @@ func (syncer *Syncer) syncAndEmit() {
 	)
 
 	syncer.logger.Info("emitting-routes-after-syncing", lager.Data{"routes": routesToEmit})
-	err = syncer.emitter.Emit(routesToEmit, &routesSynced, nil)
+	err = syncer.emitter.Emit(routesToEmit)
 	if err != nil {
 		syncer.logger.Error("failed-to-emit-synced", err)
 	}
+	count := syncer.hostNameLen(routesToEmit.RegistrationMessages)
+	routesSynced.Add(count)
 
 	routesTotal.Send(syncer.table.RouteCount())
+}
+
+func (syncer *Syncer) hostNameLen(messages []routing_table.RegistryMessage) uint64 {
+	count := 0
+	for _, message := range messages {
+		count += len(message.URIs)
+	}
+	return uint64(count)
 }
 
 func (syncer *Syncer) register(desired receptor.DesiredLRPResponse, actual receptor.ActualLRPResponse) error {
