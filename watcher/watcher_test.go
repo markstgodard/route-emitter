@@ -48,6 +48,7 @@ var _ = Describe("Watcher", func() {
 		eventSource    *fake_receptor.FakeEventSource
 		receptorClient *fake_receptor.FakeClient
 		table          *fake_routing_table.FakeRoutingTable
+		tableFactory   routing_table.RoutingTableFactory
 		emitter        *fake_nats_emitter.FakeNATSEmitter
 		syncEvents     syncer.Events
 
@@ -78,6 +79,7 @@ var _ = Describe("Watcher", func() {
 		receptorClient.SubscribeToEventsReturns(eventSource, nil)
 
 		table = &fake_routing_table.FakeRoutingTable{}
+		tableFactory = routing_table.NewRoutingTableFactory()
 		emitter = &fake_nats_emitter.FakeNATSEmitter{}
 		syncEvents = syncer.Events{
 			Sync: make(chan struct{}),
@@ -93,7 +95,7 @@ var _ = Describe("Watcher", func() {
 
 		clock = fakeclock.NewFakeClock(time.Now())
 
-		watcherProcess = watcher.NewWatcher(receptorClient, clock, table, emitter, syncEvents, logger)
+		watcherProcess = watcher.NewWatcher(receptorClient, clock, table, tableFactory, emitter, syncEvents, logger)
 
 		expectedRoutes = []string{"route-1", "route-2"}
 		expectedCFRoute = cfroutes.CFRoute{Hostnames: expectedRoutes, Port: expectedContainerPort}
@@ -178,17 +180,16 @@ var _ = Describe("Watcher", func() {
 			})
 
 			JustBeforeEach(func() {
-				table.SetRoutesReturns(dummyMessagesToEmit)
+				table.SetRoutesFromDesiredReturns(dummyMessagesToEmit)
 
 				nextEvent.Store(EventHolder{receptor.NewDesiredLRPCreatedEvent(desiredLRP)})
 			})
 
 			It("should set the routes on the table", func() {
-				Eventually(table.SetRoutesCallCount).Should(Equal(1))
+				Eventually(table.SetRoutesFromDesiredCallCount).Should(Equal(1))
 
-				key, routes := table.SetRoutesArgsForCall(0)
-				Expect(key).To(Equal(expectedRoutingKey))
-				Expect(routes).To(Equal(routing_table.Routes{Hostnames: expectedRoutes, LogGuid: logGuid}))
+				actualDesiredLRP := table.SetRoutesFromDesiredArgsForCall(0)
+				Expect(actualDesiredLRP).To(Equal(desiredLRP))
 			})
 
 			It("sends a 'routes registered' metric", func() {
@@ -216,24 +217,16 @@ var _ = Describe("Watcher", func() {
 				})
 
 				It("registers all of the routes on the table", func() {
-					Eventually(table.SetRoutesCallCount).Should(Equal(2))
+					Eventually(table.SetRoutesFromDesiredCallCount).Should(Equal(1))
 
-					key, routes := table.SetRoutesArgsForCall(0)
-					Expect(key).To(Equal(expectedRoutingKey))
-					Expect(routes).To(Equal(routing_table.Routes{Hostnames: expectedRoutes, LogGuid: logGuid}))
-
-					key, routes = table.SetRoutesArgsForCall(1)
-					Expect(key).To(Equal(expectedAdditionalRoutingKey))
-					Expect(routes).To(Equal(routing_table.Routes{Hostnames: expectedAdditionalRoutes, LogGuid: logGuid}))
+					actualDesiredLRP := table.SetRoutesFromDesiredArgsForCall(0)
+					Expect(actualDesiredLRP).To(Equal(desiredLRP))
 				})
 
 				It("emits whatever the table tells it to emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(3))
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
 
 					messagesToEmit := emitter.EmitArgsForCall(1)
-					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
-
-					messagesToEmit = emitter.EmitArgsForCall(2)
 					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
 				})
 			})
@@ -244,7 +237,7 @@ var _ = Describe("Watcher", func() {
 			var changedDesiredLRP receptor.DesiredLRPResponse
 
 			BeforeEach(func() {
-				table.SetRoutesReturns(dummyMessagesToEmit)
+				table.UpdateRoutesFromDesiredReturns(dummyMessagesToEmit)
 
 				originalDesiredLRP = receptor.DesiredLRPResponse{
 					Action: &models.RunAction{
@@ -275,11 +268,11 @@ var _ = Describe("Watcher", func() {
 				)})
 			})
 
-			It("should set the routes on the table", func() {
-				Eventually(table.SetRoutesCallCount).Should(Equal(1))
-				key, routes := table.SetRoutesArgsForCall(0)
-				Expect(key).To(Equal(expectedRoutingKey))
-				Expect(routes).To(Equal(routing_table.Routes{Hostnames: expectedRoutes, LogGuid: logGuid}))
+			It("updates the route for the desired lrp", func() {
+				Eventually(table.UpdateRoutesFromDesiredCallCount).Should(Equal(1))
+				before, after := table.UpdateRoutesFromDesiredArgsForCall(0)
+				Expect(before).To(Equal(originalDesiredLRP))
+				Expect(after).To(Equal(changedDesiredLRP))
 			})
 
 			It("sends a 'routes registered' metric", func() {
@@ -298,107 +291,6 @@ var _ = Describe("Watcher", func() {
 				Eventually(emitter.EmitCallCount).Should(Equal(2))
 				messagesToEmit := emitter.EmitArgsForCall(1)
 				Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
-			})
-
-			Context("when CF routes are added without an associated container port", func() {
-				BeforeEach(func() {
-					changedDesiredLRP.Ports = []uint16{expectedContainerPort}
-					changedDesiredLRP.Routes = cfroutes.CFRoutes{expectedCFRoute, expectedAdditionalCFRoute}.RoutingInfo()
-				})
-
-				It("registers all of the routes associated with a port on the table", func() {
-					Eventually(table.SetRoutesCallCount).Should(Equal(1))
-
-					key, routes := table.SetRoutesArgsForCall(0)
-					Expect(key).To(Equal(expectedRoutingKey))
-					Expect(routes).To(Equal(routing_table.Routes{Hostnames: expectedRoutes, LogGuid: logGuid}))
-				})
-
-				It("emits whatever the table tells it to emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(2))
-
-					messagesToEmit := emitter.EmitArgsForCall(1)
-					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
-				})
-			})
-
-			Context("when CF routes and container ports are added", func() {
-				BeforeEach(func() {
-					changedDesiredLRP.Ports = []uint16{expectedContainerPort, expectedAdditionalContainerPort}
-					changedDesiredLRP.Routes = cfroutes.CFRoutes{expectedCFRoute, expectedAdditionalCFRoute}.RoutingInfo()
-				})
-
-				It("registers all of the routes on the table", func() {
-					Eventually(table.SetRoutesCallCount).Should(Equal(2))
-
-					key, routes := table.SetRoutesArgsForCall(0)
-					Expect(key).To(Equal(expectedRoutingKey))
-					Expect(routes).To(Equal(routing_table.Routes{Hostnames: expectedRoutes, LogGuid: logGuid}))
-
-					key, routes = table.SetRoutesArgsForCall(1)
-					Expect(key).To(Equal(expectedAdditionalRoutingKey))
-					Expect(routes).To(Equal(routing_table.Routes{Hostnames: expectedAdditionalRoutes, LogGuid: logGuid}))
-				})
-
-				It("emits whatever the table tells it to emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(3))
-
-					messagesToEmit := emitter.EmitArgsForCall(1)
-					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
-
-					messagesToEmit = emitter.EmitArgsForCall(2)
-					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
-				})
-			})
-
-			Context("when CF routes are removed", func() {
-				BeforeEach(func() {
-					changedDesiredLRP.Ports = []uint16{expectedContainerPort}
-					changedDesiredLRP.Routes = cfroutes.CFRoutes{}.RoutingInfo()
-
-					table.SetRoutesReturns(routing_table.MessagesToEmit{})
-					table.RemoveRoutesReturns(dummyMessagesToEmit)
-				})
-
-				It("deletes the routes for the missng key", func() {
-					Eventually(table.RemoveRoutesCallCount).Should(Equal(1))
-
-					key, modTag := table.RemoveRoutesArgsForCall(0)
-					Expect(key).To(Equal(expectedRoutingKey))
-					Expect(modTag).To(Equal(changedDesiredLRP.ModificationTag))
-				})
-
-				It("emits whatever the table tells it to emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(2))
-
-					messagesToEmit := emitter.EmitArgsForCall(1)
-					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
-				})
-			})
-
-			Context("when container ports are removed", func() {
-				BeforeEach(func() {
-					changedDesiredLRP.Ports = []uint16{}
-					changedDesiredLRP.Routes = cfroutes.CFRoutes{expectedCFRoute}.RoutingInfo()
-
-					table.SetRoutesReturns(routing_table.MessagesToEmit{})
-					table.RemoveRoutesReturns(dummyMessagesToEmit)
-				})
-
-				It("deletes the routes for the missng key", func() {
-					Eventually(table.RemoveRoutesCallCount).Should(Equal(1))
-
-					key, modTag := table.RemoveRoutesArgsForCall(0)
-					Expect(key).To(Equal(expectedRoutingKey))
-					Expect(modTag).To(Equal(changedDesiredLRP.ModificationTag))
-				})
-
-				It("emits whatever the table tells it to emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(2))
-
-					messagesToEmit := emitter.EmitArgsForCall(1)
-					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
-				})
 			})
 		})
 
@@ -500,28 +392,19 @@ var _ = Describe("Watcher", func() {
 				})
 
 				JustBeforeEach(func() {
-					table.AddEndpointReturns(dummyMessagesToEmit)
+					table.AddEndpointFromActualReturns(dummyMessagesToEmit)
 					nextEvent.Store(EventHolder{receptor.NewActualLRPCreatedEvent(actualLRP)})
 				})
 
 				It("should add/update the endpoints on the table", func() {
-					Eventually(table.AddEndpointCallCount).Should(Equal(2))
+					Eventually(table.AddEndpointFromActualCallCount).Should(Equal(1))
 
-					keys := routing_table.RoutingKeysFromActual(actualLRP)
-					endpoints, err := routing_table.EndpointsFromActual(actualLRP)
-					Expect(err).NotTo(HaveOccurred())
-
-					key, endpoint := table.AddEndpointArgsForCall(0)
-					Expect(keys).To(ContainElement(key))
-					Expect(endpoint).To(Equal(endpoints[key.ContainerPort]))
-
-					key, endpoint = table.AddEndpointArgsForCall(1)
-					Expect(keys).To(ContainElement(key))
-					Expect(endpoint).To(Equal(endpoints[key.ContainerPort]))
+					passedActualLRP := table.AddEndpointFromActualArgsForCall(0)
+					Expect(passedActualLRP).To(Equal(actualLRP))
 				})
 
 				It("should emit whatever the table tells it to emit", func() {
-					Eventually(emitter.EmitCallCount).Should(Equal(3))
+					Eventually(emitter.EmitCallCount).Should(Equal(2))
 
 					messagesToEmit := emitter.EmitArgsForCall(1)
 					Expect(messagesToEmit).To(Equal(dummyMessagesToEmit))
@@ -530,7 +413,7 @@ var _ = Describe("Watcher", func() {
 				It("sends a 'routes registered' metric", func() {
 					Eventually(func() uint64 {
 						return fakeMetricSender.GetCounter("RoutesRegistered")
-					}).Should(BeEquivalentTo(4))
+					}).Should(BeEquivalentTo(2))
 				})
 
 				It("sends a 'routes unregistered' metric", func() {
@@ -780,7 +663,6 @@ var _ = Describe("Watcher", func() {
 						Port:          expectedAdditionalExternalPort,
 						ContainerPort: expectedAdditionalContainerPort,
 					}))
-
 				})
 
 				It("should emit whatever the table tells it to emit", func() {
@@ -1110,15 +992,15 @@ var _ = Describe("Watcher", func() {
 					BeforeEach(func() {
 						ready = make(chan struct{})
 
-						tempTable := routing_table.NewTempTable(
-							routing_table.RoutesByRoutingKeyFromDesireds([]receptor.DesiredLRPResponse{desiredLRP1, desiredLRP2}),
-							routing_table.EndpointsByRoutingKeyFromActuals([]receptor.ActualLRPResponse{actualLRP1, actualLRP2}),
+						tempTable := tableFactory.NewTempTable(
+							[]receptor.DesiredLRPResponse{desiredLRP1, desiredLRP2},
+							[]receptor.ActualLRPResponse{actualLRP1, actualLRP2},
 						)
 
 						table := routing_table.NewTable()
 						table.Swap(tempTable)
 
-						watcherProcess = watcher.NewWatcher(receptorClient, clock, table, emitter, syncEvents, logger)
+						watcherProcess = watcher.NewWatcher(receptorClient, clock, table, tableFactory, emitter, syncEvents, logger)
 
 						receptorClient.DesiredLRPsStub = func() ([]receptor.DesiredLRPResponse, error) {
 							defer GinkgoRecover()
@@ -1145,7 +1027,6 @@ var _ = Describe("Watcher", func() {
 								routing_table.RegistryMessageFor(endpoint1, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: "lg1"}),
 							},
 						}))
-
 					})
 				})
 

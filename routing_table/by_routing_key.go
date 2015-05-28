@@ -54,11 +54,12 @@ func EndpointsFromActual(actual receptor.ActualLRPResponse) (map[uint16]Endpoint
 
 	for _, portMapping := range actual.Ports {
 		endpoint := Endpoint{
-			InstanceGuid:  actual.InstanceGuid,
-			Host:          actual.Address,
-			Port:          portMapping.HostPort,
-			ContainerPort: portMapping.ContainerPort,
-			Evacuating:    actual.Evacuating,
+			InstanceGuid:    actual.InstanceGuid,
+			Host:            actual.Address,
+			Port:            portMapping.HostPort,
+			ContainerPort:   portMapping.ContainerPort,
+			Evacuating:      actual.Evacuating,
+			ModificationTag: actual.ModificationTag,
 		}
 		endpoints[portMapping.ContainerPort] = endpoint
 	}

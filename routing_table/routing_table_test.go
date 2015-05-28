@@ -2,7 +2,9 @@ package routing_table_test
 
 import (
 	"github.com/cloudfoundry-incubator/receptor"
+	"github.com/cloudfoundry-incubator/route-emitter/cfroutes"
 	"github.com/cloudfoundry-incubator/route-emitter/routing_table"
+	"github.com/cloudfoundry-incubator/runtime-schema/models"
 
 	. "github.com/cloudfoundry-incubator/route-emitter/routing_table/matchers"
 	. "github.com/onsi/ginkgo"
@@ -32,6 +34,34 @@ var _ = Describe("RoutingTable", func() {
 	evacuating1 := routing_table.Endpoint{InstanceGuid: "ig-1", Host: "1.1.1.1", Port: 11, ContainerPort: 8080, Evacuating: true, ModificationTag: currentTag}
 
 	logGuid := "some-log-guid"
+
+	getDesiredLRP := func(key routing_table.RoutingKey, routes routing_table.Routes) receptor.DesiredLRPResponse {
+		var desiredLRP receptor.DesiredLRPResponse
+		desiredLRP.ProcessGuid = key.ProcessGuid
+		desiredLRP.Ports = []uint16{key.ContainerPort}
+		desiredLRP.LogGuid = routes.LogGuid
+		desiredLRP.ModificationTag = routes.ModificationTag
+		cfRoutes := cfroutes.CFRoutes{
+			cfroutes.CFRoute{
+				Hostnames: routes.Hostnames,
+				Port:      key.ContainerPort,
+			},
+		}
+		desiredLRP.Routes = cfRoutes.RoutingInfo()
+		return desiredLRP
+	}
+
+	getActualLRP := func(key routing_table.RoutingKey, endpoint routing_table.Endpoint) receptor.ActualLRPResponse {
+		actualLRP := receptor.ActualLRPResponse{
+			ProcessGuid:     key.ProcessGuid,
+			InstanceGuid:    endpoint.InstanceGuid,
+			Address:         endpoint.Host,
+			Evacuating:      endpoint.Evacuating,
+			ModificationTag: endpoint.ModificationTag,
+			Ports:           []receptor.PortMapping{{ContainerPort: endpoint.ContainerPort, HostPort: endpoint.Port}},
+		}
+		return actualLRP
+	}
 
 	BeforeEach(func() {
 		table = routing_table.NewTable()
@@ -479,7 +509,8 @@ var _ = Describe("RoutingTable", func() {
 		Context("when the table is empty", func() {
 			Context("When setting routes", func() {
 				It("emits nothing", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 			})
@@ -493,7 +524,8 @@ var _ = Describe("RoutingTable", func() {
 
 			Context("when adding/updating endpoints", func() {
 				It("emits nothing", func() {
-					messagesToEmit = table.AddEndpoint(key, endpoint1)
+					actualLRP := getActualLRP(key, endpoint1)
+					messagesToEmit = table.AddEndpointFromActual(actualLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 			})
@@ -508,24 +540,45 @@ var _ = Describe("RoutingTable", func() {
 
 		Context("when there are both endpoints and routes in the table", func() {
 			BeforeEach(func() {
-				table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
-				table.AddEndpoint(key, endpoint1)
-				table.AddEndpoint(key, endpoint2)
+				desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
+				table.SetRoutesFromDesired(desiredLRP)
+				actualLRP := getActualLRP(key, endpoint1)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP)
+
+				actualLRP2 := getActualLRP(key, endpoint2)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP2)
 			})
 
 			Describe("SetRoutes", func() {
 				It("emits nothing when the route's hostnames do not change", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
+					Expect(messagesToEmit).To(BeZero())
+				})
+
+				It("emits nothing when the route's container ports do not match the key", func() {
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2, hostname3}, LogGuid: logGuid, ModificationTag: newerTag})
+					cfRoutes := cfroutes.CFRoutes{
+						cfroutes.CFRoute{
+							Hostnames: []string{hostname1, hostname2, hostname3},
+							Port:      9090,
+						},
+					}
+					desiredLRP.Routes = cfRoutes.RoutingInfo()
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
+
 					Expect(messagesToEmit).To(BeZero())
 				})
 
 				It("emits nothing when a hostname is added to a route with an older tag", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2, hostname3}, LogGuid: logGuid, ModificationTag: olderTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2, hostname3}, LogGuid: logGuid, ModificationTag: olderTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 
 				It("emits registrations when a hostname is added to a route with a newer tag", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2, hostname3}, LogGuid: logGuid, ModificationTag: newerTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2, hostname3}, LogGuid: logGuid, ModificationTag: newerTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 
 					expected := routing_table.MessagesToEmit{
 						RegistrationMessages: []routing_table.RegistryMessage{
@@ -537,12 +590,14 @@ var _ = Describe("RoutingTable", func() {
 				})
 
 				It("emits nothing when a hostname is removed from a route with an older tag", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid, ModificationTag: olderTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid, ModificationTag: olderTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 
 				It("emits registrations and unregistrations when a hostname is removed from a route with a newer tag", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid, ModificationTag: newerTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid, ModificationTag: newerTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 
 					expected := routing_table.MessagesToEmit{
 						RegistrationMessages: []routing_table.RegistryMessage{
@@ -558,12 +613,14 @@ var _ = Describe("RoutingTable", func() {
 				})
 
 				It("emits nothing when hostnames are added and removed from a route with an older tag", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname3}, LogGuid: logGuid, ModificationTag: olderTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname3}, LogGuid: logGuid, ModificationTag: olderTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 
 				It("emits registrations and unregistrations when hostnames are added and removed from a route with a newer tag", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname3}, LogGuid: logGuid, ModificationTag: newerTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname3}, LogGuid: logGuid, ModificationTag: newerTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 
 					expected := routing_table.MessagesToEmit{
 						RegistrationMessages: []routing_table.RegistryMessage{
@@ -610,9 +667,10 @@ var _ = Describe("RoutingTable", func() {
 				})
 			})
 
-			Context("AddEndpoint", func() {
+			Context("AddEndpointFromActual", func() {
 				It("emits nothing when the tag is the same", func() {
-					messagesToEmit = table.AddEndpoint(key, endpoint1)
+					actualLRP := getActualLRP(key, endpoint1)
+					messagesToEmit = table.AddEndpointFromActual(actualLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 
@@ -620,7 +678,8 @@ var _ = Describe("RoutingTable", func() {
 					updatedEndpoint := endpoint1
 					updatedEndpoint.ModificationTag = olderTag
 
-					messagesToEmit = table.AddEndpoint(key, updatedEndpoint)
+					actualLRP := getActualLRP(key, updatedEndpoint)
+					messagesToEmit = table.AddEndpointFromActual(actualLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 
@@ -628,12 +687,14 @@ var _ = Describe("RoutingTable", func() {
 					updatedEndpoint := endpoint1
 					updatedEndpoint.ModificationTag = newerTag
 
-					messagesToEmit = table.AddEndpoint(key, updatedEndpoint)
+					actualLRP := getActualLRP(key, updatedEndpoint)
+					messagesToEmit = table.AddEndpointFromActual(actualLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 
 				It("emits registrations when adding an endpoint", func() {
-					messagesToEmit = table.AddEndpoint(key, endpoint3)
+					actualLRP := getActualLRP(key, endpoint3)
+					messagesToEmit = table.AddEndpointFromActual(actualLRP)
 
 					expected := routing_table.MessagesToEmit{
 						RegistrationMessages: []routing_table.RegistryMessage{
@@ -645,7 +706,8 @@ var _ = Describe("RoutingTable", func() {
 
 				Context("when an evacuating endpoint is added for an instance that already exists", func() {
 					It("emits nothing", func() {
-						messagesToEmit = table.AddEndpoint(key, evacuating1)
+						actualLRP := getActualLRP(key, evacuating1)
+						messagesToEmit = table.AddEndpointFromActual(actualLRP)
 						Expect(messagesToEmit).To(BeZero())
 					})
 				})
@@ -656,14 +718,16 @@ var _ = Describe("RoutingTable", func() {
 					})
 
 					It("emits nothing", func() {
-						messagesToEmit = table.AddEndpoint(key, endpoint1)
+						actualLRP := getActualLRP(key, endpoint1)
+						messagesToEmit = table.AddEndpointFromActual(actualLRP)
 						Expect(messagesToEmit).To(BeZero())
 					})
 				})
 
 				Context("when the endpoint does not already exist", func() {
 					It("emits registrations", func() {
-						messagesToEmit = table.AddEndpoint(key, endpoint3)
+						actualLRP := getActualLRP(key, endpoint3)
+						messagesToEmit = table.AddEndpointFromActual(actualLRP)
 
 						expected := routing_table.MessagesToEmit{
 							RegistrationMessages: []routing_table.RegistryMessage{
@@ -709,7 +773,8 @@ var _ = Describe("RoutingTable", func() {
 
 				Context("when an instance endpoint is removed for an instance that already exists", func() {
 					BeforeEach(func() {
-						table.AddEndpoint(key, evacuating1)
+						actualLRP := getActualLRP(key, evacuating1)
+						messagesToEmit = table.AddEndpointFromActual(actualLRP)
 					})
 
 					It("emits nothing", func() {
@@ -720,11 +785,13 @@ var _ = Describe("RoutingTable", func() {
 
 				Context("when an evacuating endpoint is removed instance that already exists", func() {
 					BeforeEach(func() {
-						table.AddEndpoint(key, evacuating1)
+						actualLRP := getActualLRP(key, evacuating1)
+						messagesToEmit = table.AddEndpointFromActual(actualLRP)
 					})
 
 					It("emits nothing", func() {
-						messagesToEmit = table.AddEndpoint(key, endpoint1)
+						actualLRP := getActualLRP(key, endpoint1)
+						messagesToEmit = table.AddEndpointFromActual(actualLRP)
 						Expect(messagesToEmit).To(BeZero())
 					})
 				})
@@ -733,12 +800,14 @@ var _ = Describe("RoutingTable", func() {
 
 		Context("when there are only routes in the table", func() {
 			BeforeEach(func() {
-				table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid})
+				desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid})
+				table.SetRoutesFromDesired(desiredLRP)
 			})
 
 			Context("When setting routes", func() {
 				It("emits nothing", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname3}, LogGuid: logGuid})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname3}, LogGuid: logGuid})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 					Expect(messagesToEmit).To(BeZero())
 				})
 			})
@@ -752,7 +821,8 @@ var _ = Describe("RoutingTable", func() {
 
 			Context("when adding/updating endpoints", func() {
 				It("emits registrations", func() {
-					messagesToEmit = table.AddEndpoint(key, endpoint1)
+					actualLRP := getActualLRP(key, endpoint1)
+					messagesToEmit = table.AddEndpointFromActual(actualLRP)
 
 					expected := routing_table.MessagesToEmit{
 						RegistrationMessages: []routing_table.RegistryMessage{
@@ -766,13 +836,17 @@ var _ = Describe("RoutingTable", func() {
 
 		Context("when there are only endpoints in the table", func() {
 			BeforeEach(func() {
-				table.AddEndpoint(key, endpoint1)
-				table.AddEndpoint(key, endpoint2)
+				actualLRP := getActualLRP(key, endpoint1)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP)
+
+				actualLRP2 := getActualLRP(key, endpoint2)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP2)
 			})
 
 			Context("When setting routes", func() {
 				It("emits registrations", func() {
-					messagesToEmit = table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
+					desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid, ModificationTag: currentTag})
+					messagesToEmit = table.SetRoutesFromDesired(desiredLRP)
 
 					expected := routing_table.MessagesToEmit{
 						RegistrationMessages: []routing_table.RegistryMessage{
@@ -793,7 +867,9 @@ var _ = Describe("RoutingTable", func() {
 
 			Context("when adding/updating endpoints", func() {
 				It("emits nothing", func() {
-					messagesToEmit = table.AddEndpoint(key, endpoint2)
+					actualLRP := getActualLRP(key, endpoint2)
+					messagesToEmit = table.AddEndpointFromActual(actualLRP)
+
 					Expect(messagesToEmit).To(BeZero())
 				})
 			})
@@ -817,7 +893,8 @@ var _ = Describe("RoutingTable", func() {
 
 		Context("when the table has routes but no endpoints", func() {
 			BeforeEach(func() {
-				table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid})
+				desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid})
+				table.SetRoutesFromDesired(desiredLRP)
 			})
 
 			It("should be empty", func() {
@@ -828,8 +905,11 @@ var _ = Describe("RoutingTable", func() {
 
 		Context("when the table has endpoints but no routes", func() {
 			BeforeEach(func() {
-				table.AddEndpoint(key, endpoint1)
-				table.AddEndpoint(key, endpoint2)
+				actualLRP := getActualLRP(key, endpoint1)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP)
+
+				actualLRP2 := getActualLRP(key, endpoint2)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP2)
 			})
 
 			It("should be empty", func() {
@@ -840,9 +920,13 @@ var _ = Describe("RoutingTable", func() {
 
 		Context("when the table has routes and endpoints", func() {
 			BeforeEach(func() {
-				table.SetRoutes(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid})
-				table.AddEndpoint(key, endpoint1)
-				table.AddEndpoint(key, endpoint2)
+				desiredLRP := getDesiredLRP(key, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid})
+				table.SetRoutesFromDesired(desiredLRP)
+				actualLRP := getActualLRP(key, endpoint1)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP)
+
+				actualLRP2 := getActualLRP(key, endpoint2)
+				messagesToEmit = table.AddEndpointFromActual(actualLRP2)
 			})
 
 			It("emits the registrations", func() {
@@ -865,22 +949,157 @@ var _ = Describe("RoutingTable", func() {
 		})
 
 		It("returns 1 after adding a route to a single process", func() {
-			table.SetRoutes(routing_table.RoutingKey{ProcessGuid: "fake-process-guid"}, routing_table.Routes{Hostnames: []string{"fake-route-url"}, LogGuid: logGuid})
+			desiredLRP := getDesiredLRP(routing_table.RoutingKey{ProcessGuid: "fake-process-guid"}, routing_table.Routes{Hostnames: []string{"fake-route-url"}, LogGuid: logGuid})
+			table.SetRoutesFromDesired(desiredLRP)
 
 			Expect(table.RouteCount()).To(Equal(1))
 		})
 
 		It("returns 2 after associating 2 urls with a single process", func() {
-			table.SetRoutes(routing_table.RoutingKey{ProcessGuid: "fake-process-guid"}, routing_table.Routes{Hostnames: []string{"fake-route-url-1", "fake-route-url-2"}, LogGuid: logGuid})
+			desiredLRP := getDesiredLRP(routing_table.RoutingKey{ProcessGuid: "fake-process-guid"}, routing_table.Routes{Hostnames: []string{"fake-route-url-1", "fake-route-url-2"}, LogGuid: logGuid})
+			table.SetRoutesFromDesired(desiredLRP)
 
 			Expect(table.RouteCount()).To(Equal(2))
 		})
 
 		It("returns 4 after associating 2 urls with two processes", func() {
-			table.SetRoutes(routing_table.RoutingKey{ProcessGuid: "fake-process-guid-a"}, routing_table.Routes{Hostnames: []string{"fake-route-url-a-1", "fake-route-url-a-2"}, LogGuid: logGuid})
-			table.SetRoutes(routing_table.RoutingKey{ProcessGuid: "fake-process-guid-b"}, routing_table.Routes{Hostnames: []string{"fake-route-url-b-1", "fake-route-url-b-2"}, LogGuid: logGuid})
+			desiredLRP := getDesiredLRP(routing_table.RoutingKey{ProcessGuid: "fake-process-guid-a"}, routing_table.Routes{Hostnames: []string{"fake-route-url-a-1", "fake-route-url-a-2"}, LogGuid: logGuid})
+			table.SetRoutesFromDesired(desiredLRP)
+			desiredLRP = getDesiredLRP(routing_table.RoutingKey{ProcessGuid: "fake-process-guid-b"}, routing_table.Routes{Hostnames: []string{"fake-route-url-b-1", "fake-route-url-b-2"}, LogGuid: logGuid})
+			table.SetRoutesFromDesired(desiredLRP)
 
 			Expect(table.RouteCount()).To(Equal(4))
+		})
+	})
+
+	Describe("UpdateRoutesFromDesired", func() {
+		var (
+			originalDesiredLRP receptor.DesiredLRPResponse
+			changedDesiredLRP  receptor.DesiredLRPResponse
+
+			expectedAdditionalCFRoute                              cfroutes.CFRoute
+			expectedCFRoute                                        cfroutes.CFRoute
+			expectedChangedCFRoute                                 cfroutes.CFRoute
+			expectedContainerPort, expectedAdditionalContainerPort uint16
+		)
+
+		BeforeEach(func() {
+			expectedContainerPort = uint16(8080)
+			expectedAdditionalContainerPort = uint16(9090)
+			expectedProcessGuid := "process-guid"
+
+			expectedRoutes := []string{hostname1}
+			expectedCFRoute = cfroutes.CFRoute{Hostnames: expectedRoutes, Port: expectedContainerPort}
+
+			expectedAdditionalRoutes := []string{"additional-1", "additional-2"}
+			expectedAdditionalCFRoute = cfroutes.CFRoute{Hostnames: expectedAdditionalRoutes, Port: expectedAdditionalContainerPort}
+
+			changedRoutes := []string{hostname1, hostname2}
+			expectedChangedCFRoute = cfroutes.CFRoute{Hostnames: changedRoutes, Port: expectedContainerPort}
+
+			key = routing_table.RoutingKey{
+				ProcessGuid:   expectedProcessGuid,
+				ContainerPort: expectedContainerPort,
+			}
+
+			originalDesiredLRP = receptor.DesiredLRPResponse{
+				Action: &models.RunAction{
+					Path: "ls",
+				},
+				Domain:      "tests",
+				ProcessGuid: expectedProcessGuid,
+				LogGuid:     logGuid,
+				Ports:       []uint16{expectedContainerPort},
+				Routes:      cfroutes.CFRoutes{expectedCFRoute}.RoutingInfo(),
+			}
+			table.SetRoutesFromDesired(originalDesiredLRP)
+			actualLRP := getActualLRP(key, endpoint1)
+			messagesToEmit = table.AddEndpointFromActual(actualLRP)
+
+			actualLRP2 := getActualLRP(key, endpoint2)
+			messagesToEmit = table.AddEndpointFromActual(actualLRP2)
+
+			changedDesiredLRP = receptor.DesiredLRPResponse{
+				Action: &models.RunAction{
+					Path: "ls",
+				},
+				Domain:          "tests",
+				ProcessGuid:     expectedProcessGuid,
+				LogGuid:         logGuid,
+				Ports:           []uint16{expectedContainerPort},
+				Routes:          cfroutes.CFRoutes{expectedChangedCFRoute}.RoutingInfo(),
+				ModificationTag: receptor.ModificationTag{Epoch: "abcd", Index: 1},
+			}
+
+		})
+
+		It("returns the registration messages for new and existing routes", func() {
+			expected := routing_table.MessagesToEmit{
+				RegistrationMessages: []routing_table.RegistryMessage{
+					routing_table.RegistryMessageFor(endpoint1, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid}),
+					routing_table.RegistryMessageFor(endpoint2, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid}),
+				},
+			}
+			Expect(table.UpdateRoutesFromDesired(originalDesiredLRP, changedDesiredLRP)).To(MatchMessagesToEmit(expected))
+		})
+
+		Context("when there are no changes to route", func() {
+			BeforeEach(func() {
+				changedDesiredLRP.Routes = cfroutes.CFRoutes{expectedCFRoute}.RoutingInfo()
+			})
+
+			It("returns no registration messages", func() {
+				Expect(table.UpdateRoutesFromDesired(originalDesiredLRP, changedDesiredLRP)).To(BeZero())
+			})
+		})
+
+		Context("when CF routes are added without an associated container port", func() {
+			BeforeEach(func() {
+				changedDesiredLRP.Routes = cfroutes.CFRoutes{expectedChangedCFRoute, expectedAdditionalCFRoute}.RoutingInfo()
+			})
+
+			It("returns the registration messages only for routes with a port on the desired lrp", func() {
+				expected := routing_table.MessagesToEmit{
+					RegistrationMessages: []routing_table.RegistryMessage{
+						routing_table.RegistryMessageFor(endpoint1, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid}),
+						routing_table.RegistryMessageFor(endpoint2, routing_table.Routes{Hostnames: []string{hostname1, hostname2}, LogGuid: logGuid}),
+					},
+				}
+				Expect(table.UpdateRoutesFromDesired(originalDesiredLRP, changedDesiredLRP)).To(MatchMessagesToEmit(expected))
+			})
+		})
+
+		Context("when CF routes are removed", func() {
+			BeforeEach(func() {
+				changedDesiredLRP.Routes = cfroutes.CFRoutes{}.RoutingInfo()
+			})
+
+			It("returns the unregistration messages for missing hosts", func() {
+				expected := routing_table.MessagesToEmit{
+					UnregistrationMessages: []routing_table.RegistryMessage{
+						routing_table.RegistryMessageFor(endpoint1, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid}),
+						routing_table.RegistryMessageFor(endpoint2, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid}),
+					},
+				}
+				Expect(table.UpdateRoutesFromDesired(originalDesiredLRP, changedDesiredLRP)).To(MatchMessagesToEmit(expected))
+			})
+		})
+
+		Context("when container ports are removed", func() {
+			BeforeEach(func() {
+				changedDesiredLRP.Ports = []uint16{}
+				changedDesiredLRP.Routes = cfroutes.CFRoutes{expectedCFRoute}.RoutingInfo()
+			})
+
+			It("returns the unregistration messages for missing ports", func() {
+				expected := routing_table.MessagesToEmit{
+					UnregistrationMessages: []routing_table.RegistryMessage{
+						routing_table.RegistryMessageFor(endpoint1, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid}),
+						routing_table.RegistryMessageFor(endpoint2, routing_table.Routes{Hostnames: []string{hostname1}, LogGuid: logGuid}),
+					},
+				}
+				Expect(table.UpdateRoutesFromDesired(originalDesiredLRP, changedDesiredLRP)).To(MatchMessagesToEmit(expected))
+			})
 		})
 	})
 })

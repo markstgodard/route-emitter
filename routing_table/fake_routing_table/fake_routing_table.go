@@ -23,15 +23,6 @@ type FakeRoutingTable struct {
 	swapReturns struct {
 		result1 routing_table.MessagesToEmit
 	}
-	SetRoutesStub        func(key routing_table.RoutingKey, routes routing_table.Routes) routing_table.MessagesToEmit
-	setRoutesMutex       sync.RWMutex
-	setRoutesArgsForCall []struct {
-		key    routing_table.RoutingKey
-		routes routing_table.Routes
-	}
-	setRoutesReturns struct {
-		result1 routing_table.MessagesToEmit
-	}
 	RemoveRoutesStub        func(key routing_table.RoutingKey, modTag receptor.ModificationTag) routing_table.MessagesToEmit
 	removeRoutesMutex       sync.RWMutex
 	removeRoutesArgsForCall []struct {
@@ -39,6 +30,23 @@ type FakeRoutingTable struct {
 		modTag receptor.ModificationTag
 	}
 	removeRoutesReturns struct {
+		result1 routing_table.MessagesToEmit
+	}
+	SetRoutesFromDesiredStub        func(desiredLRP receptor.DesiredLRPResponse) routing_table.MessagesToEmit
+	setRoutesFromDesiredMutex       sync.RWMutex
+	setRoutesFromDesiredArgsForCall []struct {
+		desiredLRP receptor.DesiredLRPResponse
+	}
+	setRoutesFromDesiredReturns struct {
+		result1 routing_table.MessagesToEmit
+	}
+	UpdateRoutesFromDesiredStub        func(before, after receptor.DesiredLRPResponse) routing_table.MessagesToEmit
+	updateRoutesFromDesiredMutex       sync.RWMutex
+	updateRoutesFromDesiredArgsForCall []struct {
+		before receptor.DesiredLRPResponse
+		after  receptor.DesiredLRPResponse
+	}
+	updateRoutesFromDesiredReturns struct {
 		result1 routing_table.MessagesToEmit
 	}
 	AddEndpointStub        func(key routing_table.RoutingKey, endpoint routing_table.Endpoint) routing_table.MessagesToEmit
@@ -57,6 +65,14 @@ type FakeRoutingTable struct {
 		endpoint routing_table.Endpoint
 	}
 	removeEndpointReturns struct {
+		result1 routing_table.MessagesToEmit
+	}
+	AddEndpointFromActualStub        func(actualLRP receptor.ActualLRPResponse) routing_table.MessagesToEmit
+	addEndpointFromActualMutex       sync.RWMutex
+	addEndpointFromActualArgsForCall []struct {
+		actualLRP receptor.ActualLRPResponse
+	}
+	addEndpointFromActualReturns struct {
 		result1 routing_table.MessagesToEmit
 	}
 	MessagesToEmitStub        func() routing_table.MessagesToEmit
@@ -123,39 +139,6 @@ func (fake *FakeRoutingTable) SwapReturns(result1 routing_table.MessagesToEmit) 
 	}{result1}
 }
 
-func (fake *FakeRoutingTable) SetRoutes(key routing_table.RoutingKey, routes routing_table.Routes) routing_table.MessagesToEmit {
-	fake.setRoutesMutex.Lock()
-	fake.setRoutesArgsForCall = append(fake.setRoutesArgsForCall, struct {
-		key    routing_table.RoutingKey
-		routes routing_table.Routes
-	}{key, routes})
-	fake.setRoutesMutex.Unlock()
-	if fake.SetRoutesStub != nil {
-		return fake.SetRoutesStub(key, routes)
-	} else {
-		return fake.setRoutesReturns.result1
-	}
-}
-
-func (fake *FakeRoutingTable) SetRoutesCallCount() int {
-	fake.setRoutesMutex.RLock()
-	defer fake.setRoutesMutex.RUnlock()
-	return len(fake.setRoutesArgsForCall)
-}
-
-func (fake *FakeRoutingTable) SetRoutesArgsForCall(i int) (routing_table.RoutingKey, routing_table.Routes) {
-	fake.setRoutesMutex.RLock()
-	defer fake.setRoutesMutex.RUnlock()
-	return fake.setRoutesArgsForCall[i].key, fake.setRoutesArgsForCall[i].routes
-}
-
-func (fake *FakeRoutingTable) SetRoutesReturns(result1 routing_table.MessagesToEmit) {
-	fake.SetRoutesStub = nil
-	fake.setRoutesReturns = struct {
-		result1 routing_table.MessagesToEmit
-	}{result1}
-}
-
 func (fake *FakeRoutingTable) RemoveRoutes(key routing_table.RoutingKey, modTag receptor.ModificationTag) routing_table.MessagesToEmit {
 	fake.removeRoutesMutex.Lock()
 	fake.removeRoutesArgsForCall = append(fake.removeRoutesArgsForCall, struct {
@@ -185,6 +168,71 @@ func (fake *FakeRoutingTable) RemoveRoutesArgsForCall(i int) (routing_table.Rout
 func (fake *FakeRoutingTable) RemoveRoutesReturns(result1 routing_table.MessagesToEmit) {
 	fake.RemoveRoutesStub = nil
 	fake.removeRoutesReturns = struct {
+		result1 routing_table.MessagesToEmit
+	}{result1}
+}
+
+func (fake *FakeRoutingTable) SetRoutesFromDesired(desiredLRP receptor.DesiredLRPResponse) routing_table.MessagesToEmit {
+	fake.setRoutesFromDesiredMutex.Lock()
+	fake.setRoutesFromDesiredArgsForCall = append(fake.setRoutesFromDesiredArgsForCall, struct {
+		desiredLRP receptor.DesiredLRPResponse
+	}{desiredLRP})
+	fake.setRoutesFromDesiredMutex.Unlock()
+	if fake.SetRoutesFromDesiredStub != nil {
+		return fake.SetRoutesFromDesiredStub(desiredLRP)
+	} else {
+		return fake.setRoutesFromDesiredReturns.result1
+	}
+}
+
+func (fake *FakeRoutingTable) SetRoutesFromDesiredCallCount() int {
+	fake.setRoutesFromDesiredMutex.RLock()
+	defer fake.setRoutesFromDesiredMutex.RUnlock()
+	return len(fake.setRoutesFromDesiredArgsForCall)
+}
+
+func (fake *FakeRoutingTable) SetRoutesFromDesiredArgsForCall(i int) receptor.DesiredLRPResponse {
+	fake.setRoutesFromDesiredMutex.RLock()
+	defer fake.setRoutesFromDesiredMutex.RUnlock()
+	return fake.setRoutesFromDesiredArgsForCall[i].desiredLRP
+}
+
+func (fake *FakeRoutingTable) SetRoutesFromDesiredReturns(result1 routing_table.MessagesToEmit) {
+	fake.SetRoutesFromDesiredStub = nil
+	fake.setRoutesFromDesiredReturns = struct {
+		result1 routing_table.MessagesToEmit
+	}{result1}
+}
+
+func (fake *FakeRoutingTable) UpdateRoutesFromDesired(before receptor.DesiredLRPResponse, after receptor.DesiredLRPResponse) routing_table.MessagesToEmit {
+	fake.updateRoutesFromDesiredMutex.Lock()
+	fake.updateRoutesFromDesiredArgsForCall = append(fake.updateRoutesFromDesiredArgsForCall, struct {
+		before receptor.DesiredLRPResponse
+		after  receptor.DesiredLRPResponse
+	}{before, after})
+	fake.updateRoutesFromDesiredMutex.Unlock()
+	if fake.UpdateRoutesFromDesiredStub != nil {
+		return fake.UpdateRoutesFromDesiredStub(before, after)
+	} else {
+		return fake.updateRoutesFromDesiredReturns.result1
+	}
+}
+
+func (fake *FakeRoutingTable) UpdateRoutesFromDesiredCallCount() int {
+	fake.updateRoutesFromDesiredMutex.RLock()
+	defer fake.updateRoutesFromDesiredMutex.RUnlock()
+	return len(fake.updateRoutesFromDesiredArgsForCall)
+}
+
+func (fake *FakeRoutingTable) UpdateRoutesFromDesiredArgsForCall(i int) (receptor.DesiredLRPResponse, receptor.DesiredLRPResponse) {
+	fake.updateRoutesFromDesiredMutex.RLock()
+	defer fake.updateRoutesFromDesiredMutex.RUnlock()
+	return fake.updateRoutesFromDesiredArgsForCall[i].before, fake.updateRoutesFromDesiredArgsForCall[i].after
+}
+
+func (fake *FakeRoutingTable) UpdateRoutesFromDesiredReturns(result1 routing_table.MessagesToEmit) {
+	fake.UpdateRoutesFromDesiredStub = nil
+	fake.updateRoutesFromDesiredReturns = struct {
 		result1 routing_table.MessagesToEmit
 	}{result1}
 }
@@ -251,6 +299,38 @@ func (fake *FakeRoutingTable) RemoveEndpointArgsForCall(i int) (routing_table.Ro
 func (fake *FakeRoutingTable) RemoveEndpointReturns(result1 routing_table.MessagesToEmit) {
 	fake.RemoveEndpointStub = nil
 	fake.removeEndpointReturns = struct {
+		result1 routing_table.MessagesToEmit
+	}{result1}
+}
+
+func (fake *FakeRoutingTable) AddEndpointFromActual(actualLRP receptor.ActualLRPResponse) routing_table.MessagesToEmit {
+	fake.addEndpointFromActualMutex.Lock()
+	fake.addEndpointFromActualArgsForCall = append(fake.addEndpointFromActualArgsForCall, struct {
+		actualLRP receptor.ActualLRPResponse
+	}{actualLRP})
+	fake.addEndpointFromActualMutex.Unlock()
+	if fake.AddEndpointFromActualStub != nil {
+		return fake.AddEndpointFromActualStub(actualLRP)
+	} else {
+		return fake.addEndpointFromActualReturns.result1
+	}
+}
+
+func (fake *FakeRoutingTable) AddEndpointFromActualCallCount() int {
+	fake.addEndpointFromActualMutex.RLock()
+	defer fake.addEndpointFromActualMutex.RUnlock()
+	return len(fake.addEndpointFromActualArgsForCall)
+}
+
+func (fake *FakeRoutingTable) AddEndpointFromActualArgsForCall(i int) receptor.ActualLRPResponse {
+	fake.addEndpointFromActualMutex.RLock()
+	defer fake.addEndpointFromActualMutex.RUnlock()
+	return fake.addEndpointFromActualArgsForCall[i].actualLRP
+}
+
+func (fake *FakeRoutingTable) AddEndpointFromActualReturns(result1 routing_table.MessagesToEmit) {
+	fake.AddEndpointFromActualStub = nil
+	fake.addEndpointFromActualReturns = struct {
 		result1 routing_table.MessagesToEmit
 	}{result1}
 }

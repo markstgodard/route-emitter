@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cloudfoundry-incubator/receptor"
-	"github.com/cloudfoundry-incubator/route-emitter/cfroutes"
 	"github.com/cloudfoundry-incubator/route-emitter/nats_emitter"
 	"github.com/cloudfoundry-incubator/route-emitter/routing_table"
 	"github.com/cloudfoundry-incubator/route-emitter/syncer"
@@ -28,6 +27,7 @@ type Watcher struct {
 	receptorClient receptor.Client
 	clock          clock.Clock
 	table          routing_table.RoutingTable
+	tableFactory   routing_table.RoutingTableFactory
 	emitter        nats_emitter.NATSEmitter
 	syncEvents     syncer.Events
 	logger         lager.Logger
@@ -55,6 +55,7 @@ func NewWatcher(
 	receptorClient receptor.Client,
 	clock clock.Clock,
 	table routing_table.RoutingTable,
+	tableFactory routing_table.RoutingTableFactory,
 	emitter nats_emitter.NATSEmitter,
 	syncEvents syncer.Events,
 	logger lager.Logger,
@@ -63,6 +64,7 @@ func NewWatcher(
 		receptorClient: receptorClient,
 		clock:          clock,
 		table:          table,
+		tableFactory:   tableFactory,
 		emitter:        emitter,
 		syncEvents:     syncEvents,
 		logger:         logger.Session("watcher"),
@@ -222,10 +224,7 @@ func (watcher *Watcher) sync(logger lager.Logger, syncEndChan chan syncEndEvent)
 		desiredLRPs = append(desiredLRPs, desiredLRPResponse)
 	}
 
-	newTable := routing_table.NewTempTable(
-		routing_table.RoutesByRoutingKeyFromDesireds(desiredLRPs),
-		routing_table.EndpointsByRoutingKeyFromActuals(runningActualLRPs),
-	)
+	newTable := watcher.tableFactory.NewTempTable(desiredLRPs, runningActualLRPs)
 
 	endEvent.table = newTable
 	endEvent.callback = func(table routing_table.RoutingTable) {
@@ -303,7 +302,8 @@ func (watcher *Watcher) handleDesiredCreate(logger lager.Logger, desiredLRP rece
 	logger.Info("starting")
 	defer logger.Info("complete")
 
-	watcher.setRoutesForDesired(logger, desiredLRP)
+	messagesToEmit := watcher.table.SetRoutesFromDesired(desiredLRP)
+	watcher.emitMessages(logger, messagesToEmit)
 }
 
 func (watcher *Watcher) handleDesiredUpdate(logger lager.Logger, before, after receptor.DesiredLRPResponse) {
@@ -314,43 +314,8 @@ func (watcher *Watcher) handleDesiredUpdate(logger lager.Logger, before, after r
 	logger.Info("starting")
 	defer logger.Info("complete")
 
-	afterKeysSet := watcher.setRoutesForDesired(logger, after)
-
-	beforeRoutingKeys := routing_table.RoutingKeysFromDesired(before)
-	afterRoutes, _ := cfroutes.CFRoutesFromRoutingInfo(after.Routes)
-
-	afterContainerPorts := set{}
-	for _, route := range afterRoutes {
-		afterContainerPorts.add(route.Port)
-	}
-
-	for _, key := range beforeRoutingKeys {
-		if !afterKeysSet.contains(key) || !afterContainerPorts.contains(key.ContainerPort) {
-			messagesToEmit := watcher.table.RemoveRoutes(key, after.ModificationTag)
-			watcher.emitMessages(logger, messagesToEmit)
-		}
-	}
-}
-
-func (watcher *Watcher) setRoutesForDesired(logger lager.Logger, desiredLRP receptor.DesiredLRPResponse) set {
-	routingKeys := routing_table.RoutingKeysFromDesired(desiredLRP)
-	routes, _ := cfroutes.CFRoutesFromRoutingInfo(desiredLRP.Routes)
-	routingKeySet := set{}
-
-	for _, key := range routingKeys {
-		routingKeySet.add(key)
-		for _, route := range routes {
-			if key.ContainerPort == route.Port {
-				messagesToEmit := watcher.table.SetRoutes(key, routing_table.Routes{
-					Hostnames: route.Hostnames,
-					LogGuid:   desiredLRP.LogGuid,
-				})
-				watcher.emitMessages(logger, messagesToEmit)
-			}
-		}
-	}
-
-	return routingKeySet
+	messagesToEmit := watcher.table.UpdateRoutesFromDesired(before, after)
+	watcher.emitMessages(logger, messagesToEmit)
 }
 
 func (watcher *Watcher) handleDesiredDelete(logger lager.Logger, desiredLRP receptor.DesiredLRPResponse) {
@@ -371,7 +336,8 @@ func (watcher *Watcher) handleActualCreate(logger lager.Logger, actualLRP recept
 	defer logger.Info("complete")
 
 	if actualLRP.State == receptor.ActualLRPStateRunning {
-		watcher.addAndEmit(logger, actualLRP)
+		messagesToEmit := watcher.table.AddEndpointFromActual(actualLRP)
+		watcher.emitMessages(logger, messagesToEmit)
 	}
 }
 
