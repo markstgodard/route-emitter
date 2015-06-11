@@ -49,8 +49,11 @@ var bbs *Bbs.BBS
 var logger *lagertest.TestLogger
 var syncInterval time.Duration
 
+const assetsPath = "../../../../cloudfoundry/storeadapter/assets/"
+
 func TestRouteEmitter(t *testing.T) {
 	RegisterFailHandler(Fail)
+	SetDefaultEventuallyTimeout(2 * time.Second)
 	RunSpecs(t, "Route Emitter Suite")
 }
 
@@ -98,10 +101,20 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	natsPort = 4001 + GinkgoParallelNode()
 	receptorPort = 6001 + GinkgoParallelNode()
 
-	etcdRunner = etcdstorerunner.NewETCDClusterRunner(etcdPort, 1)
+	etcdRunner = etcdstorerunner.NewETCDClusterRunner(etcdPort, 1,
+		&etcdstorerunner.SSLConfig{
+			CertFile: assetsPath + "server.crt",
+			KeyFile:  assetsPath + "server.key",
+			CAFile:   assetsPath + "ca.crt",
+		})
 	emitterPath = string(binaries["emitter"])
 	receptorPath = string(binaries["receptor"])
-	store = etcdRunner.Adapter()
+	store = etcdRunner.Adapter(
+		&etcdstorerunner.SSLConfig{
+			CertFile: assetsPath + "client.crt",
+			KeyFile:  assetsPath + "client.key",
+			CAFile:   assetsPath + "ca.crt",
+		})
 
 	consulRunner = consuladapter.NewClusterRunner(
 		9001+config.GinkgoConfig.ParallelNode*consuladapter.PortOffsetLength,
@@ -125,6 +138,9 @@ var _ = BeforeEach(func() {
 		Address:       fmt.Sprintf("127.0.0.1:%d", receptorPort),
 		EtcdCluster:   strings.Join(etcdRunner.NodeURLS(), ","),
 		ConsulCluster: consulRunner.ConsulCluster(),
+		ClientCert:    assetsPath + "client.crt",
+		ClientKey:     assetsPath + "client.key",
+		CACert:        assetsPath + "ca.crt",
 	}))
 })
 
