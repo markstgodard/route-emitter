@@ -484,9 +484,18 @@ func (watcher *Watcher) emitMessages(logger lager.Logger, messagesToEmit routing
 }
 
 func desiredLRPData(schedulingInfo *models.DesiredLRPSchedulingInfo) lager.Data {
+	//copy map by keys should be fast because it is by referance
+	logRoutes := make(models.Routes)
+	for key, value := range schedulingInfo.Routes {
+		if key == "diego-ssh" {
+			continue
+		}
+		logRoutes[key] = value
+	}
+
 	return lager.Data{
 		"process-guid": schedulingInfo.ProcessGuid,
-		"routes":       schedulingInfo.Routes,
+		"routes":       logRoutes,
 	}
 }
 
