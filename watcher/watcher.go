@@ -390,19 +390,19 @@ func (watcher *Watcher) handleDesiredUpdate(logger lager.Logger, before, after *
 		afterContainerPorts.add(route.Port)
 	}
 
+	// in case of scale down, remove endpoints
 	requestedInstances := after.Instances - before.Instances
 	if requestedInstances < 0 {
-		// fetch actual LRPs corresponding to the removed instances
-		// (if any are still running)
-
-		// TODO: iterate through all indexes that we should kill
-		actualLRPGroup, err := watcher.bbsClient.ActualLRPGroupByProcessGuidAndIndex(logger, before.ProcessGuid, 2)
-		if err != nil {
-			// TODO
+		// fetch actual LRPs corresponding to the removed instances (if any still running)
+		for i := before.Instances; i > after.Instances; i-- {
+			actualLRPGroup, err := watcher.bbsClient.ActualLRPGroupByProcessGuidAndIndex(logger, before.ProcessGuid, int(i-1))
+			if err != nil {
+				logger.Error("failed-to-fetch-actuallrp", err)
+				continue
+			}
+			actualLRPRoutingInfo := routing_table.NewActualLRPRoutingInfo(actualLRPGroup)
+			watcher.removeAndEmit(logger, actualLRPRoutingInfo)
 		}
-
-		actualLRPRoutingInfo := routing_table.NewActualLRPRoutingInfo(actualLRPGroup)
-		watcher.removeAndEmit(logger, actualLRPRoutingInfo)
 	}
 
 	for _, key := range beforeRoutingKeys {

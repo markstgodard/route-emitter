@@ -340,13 +340,11 @@ var _ = Describe("Watcher", func() {
 					actualLRPGroup := &models.ActualLRPGroup{
 						Instance: actualLRP,
 					}
-
 					bbsClient.ActualLRPGroupByProcessGuidAndIndexReturns(actualLRPGroup, nil)
-
 				})
 
-				FIt("unregisters route endpoints for instances that are no longer desired", func() {
-					Eventually(table.RemoveEndpointCallCount).Should(Equal(4)) // 2 routes for each instance multiplied by 2 instances disappearing
+				It("unregisters route endpoints for instances that are no longer desired", func() {
+					Eventually(table.RemoveEndpointCallCount).Should(Equal(4)) // 2 routes for each instance x 2 instances disappearing
 				})
 			})
 
