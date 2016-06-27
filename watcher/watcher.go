@@ -390,6 +390,21 @@ func (watcher *Watcher) handleDesiredUpdate(logger lager.Logger, before, after *
 		afterContainerPorts.add(route.Port)
 	}
 
+	requestedInstances := after.Instances - before.Instances
+	if requestedInstances < 0 {
+		// fetch actual LRPs corresponding to the removed instances
+		// (if any are still running)
+
+		// TODO: iterate through all indexes that we should kill
+		actualLRPGroup, err := watcher.bbsClient.ActualLRPGroupByProcessGuidAndIndex(logger, before.ProcessGuid, 2)
+		if err != nil {
+			// TODO
+		}
+
+		actualLRPRoutingInfo := routing_table.NewActualLRPRoutingInfo(actualLRPGroup)
+		watcher.removeAndEmit(logger, actualLRPRoutingInfo)
+	}
+
 	for _, key := range beforeRoutingKeys {
 		if !afterKeysSet.contains(key) || !afterContainerPorts.contains(key.ContainerPort) {
 			messagesToEmit := watcher.table.RemoveRoutes(key, &after.ModificationTag)

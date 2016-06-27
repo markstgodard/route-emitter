@@ -299,6 +299,7 @@ var _ = Describe("Watcher", func() {
 					ProcessGuid: expectedProcessGuid,
 					LogGuid:     logGuid,
 					Routes:      &routes,
+					Instances:   3,
 				}
 				changedDesiredLRP = &models.DesiredLRP{
 					Action: models.WrapAction(&models.RunAction{
@@ -310,6 +311,7 @@ var _ = Describe("Watcher", func() {
 					LogGuid:         logGuid,
 					Routes:          &routes,
 					ModificationTag: &models.ModificationTag{Epoch: "abcd", Index: 1},
+					Instances:       3,
 				}
 			})
 
@@ -318,6 +320,34 @@ var _ = Describe("Watcher", func() {
 					originalDesiredLRP,
 					changedDesiredLRP,
 				)})
+			})
+
+			Context("when scaling down the number of LRP instances", func() {
+				BeforeEach(func() {
+					changedDesiredLRP.Instances = 1
+
+					actualLRP := &models.ActualLRP{
+						ActualLRPKey:         models.NewActualLRPKey(expectedProcessGuid, 1, "domain"),
+						ActualLRPInstanceKey: models.NewActualLRPInstanceKey(expectedInstanceGuid, "cell-id"),
+						ActualLRPNetInfo: models.NewActualLRPNetInfo(
+							expectedHost,
+							models.NewPortMapping(expectedExternalPort, expectedContainerPort),
+							models.NewPortMapping(expectedExternalPort, expectedAdditionalContainerPort),
+						),
+						State: models.ActualLRPStateRunning,
+					}
+
+					actualLRPGroup := &models.ActualLRPGroup{
+						Instance: actualLRP,
+					}
+
+					bbsClient.ActualLRPGroupByProcessGuidAndIndexReturns(actualLRPGroup, nil)
+
+				})
+
+				FIt("unregisters route endpoints for instances that are no longer desired", func() {
+					Eventually(table.RemoveEndpointCallCount).Should(Equal(4)) // 2 routes for each instance multiplied by 2 instances disappearing
+				})
 			})
 
 			It("should set the routes on the table", func() {
